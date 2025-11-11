@@ -48,7 +48,7 @@ Capabilities:
 - Dry run (`-WhatIf`) and selective build skip (`-NoBuild`).
 - Runtime-configurable API base URL without rebuilding client.
 
-Example (deploy both):
+Example (deploy both) - Windows PowerShell:
 ```powershell
 pwsh d:\code\voice-ai-chat\deploy-appservice.ps1 `
    -SubscriptionId <SUB_ID> `
@@ -74,8 +74,116 @@ pwsh d:\code\voice-ai-chat\deploy-appservice.ps1 -SubscriptionId <SUB_ID> -Resou
 
 Override API base URL explicitly:
 ```powershell
-pwsh d:\code\voice-ai-chat\deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -ClientAppName voice-ai-client-native -ApiBaseUrl https://custom.example.com/api
+pwsh d:\code\voice-ai-chat\deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -ClientAppName voice-ai-client-native -ApiBaseUrl https://my-custom-server.azurewebsites.net/api
 ```
+
+### MacOS Local Deployment & Azure Publishing
+
+You can run the same PowerShell deployment script on macOS using the cross-platform PowerShell (`pwsh`) executable, or run equivalent Bash commands.
+
+#### 1. Install Required Tools
+
+```bash
+# Homebrew (if not installed)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Azure CLI
+brew update && brew install azure-cli
+
+# (Optional) PowerShell for running the existing .ps1 scripts
+brew install --cask powershell
+
+# Node.js (if you need a specific version, consider using fnm or nvm)
+brew install node
+```
+
+#### 2. Clone and Navigate
+```bash
+git clone https://github.com/mikefelder/az-voice-ai-chat.git
+cd az-voice-ai-chat
+```
+
+#### 3. Login to Azure
+```bash
+az login
+az account set --subscription <SUB_ID>
+```
+
+#### 4. Run Deployment Script with PowerShell
+```bash
+pwsh ./deploy-appservice.ps1 \
+  -SubscriptionId <SUB_ID> \
+  -ResourceGroupName <RG_NAME> \
+  -ServerAppName voice-ai-server-native \
+  -ClientAppName voice-ai-client-native
+```
+
+Examples (macOS):
+```bash
+# Server only
+pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -SkipClient
+
+# Client only
+pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ClientAppName voice-ai-client-native -SkipServer
+
+# Dry run
+pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -ClientAppName voice-ai-client-native -WhatIf
+
+# Custom API base URL
+pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -ClientAppName voice-ai-client-native -ApiBaseUrl https://my-custom-server.azurewebsites.net/api
+```
+
+#### 5. Bash-Only (If Avoiding PowerShell)
+If you prefer not to install PowerShell, you can manually reproduce the core steps performed by `deploy-appservice.ps1`:
+
+```bash
+# From repo root
+set -e
+SUB_ID="<SUB_ID>"
+RG="<RG_NAME>"
+SERVER="voice-ai-server-native"
+CLIENT="voice-ai-client-native"
+az account set --subscription "$SUB_ID"
+
+# Build server
+pushd server
+npm ci
+npm run build  # Ensure build script produces dist or equivalent
+zip -r ../deploy_artifacts/server.zip . -x "node_modules/*" "*.log"
+popd
+
+# Build client
+pushd client
+npm ci
+npm run build
+mkdir -p ../deploy_artifacts
+zip -r ../deploy_artifacts/client.zip dist
+popd
+
+# Create apps (first time only)
+az webapp create --resource-group "$RG" --name "$SERVER" --runtime "NODE:18-lts" --plan <APP_SERVICE_PLAN>
+az webapp create --resource-group "$RG" --name "$CLIENT" --runtime "NODE:18-lts" --plan <APP_SERVICE_PLAN>
+
+# Deploy zips
+az webapp deploy --resource-group "$RG" --name "$SERVER" --src-path deploy_artifacts/server.zip --type zip
+az webapp deploy --resource-group "$RG" --name "$CLIENT" --src-path deploy_artifacts/client.zip --type zip
+
+# Configure settings
+az webapp config appsettings set --resource-group "$RG" --name "$SERVER" --settings \
+  NODE_ENV=production PORT=8080 SQLITE_DB_PATH=/home/site/data/voice-ai-documents.db API_BASE_URL="https://$SERVER.azurewebsites.net/api"
+
+az webapp config appsettings set --resource-group "$RG" --name "$CLIENT" --settings \
+  NODE_ENV=production VITE_API_URL="https://$SERVER.azurewebsites.net/api"
+```
+
+#### 6. macOS Notes
+- Path style uses `/Users/<you>/code/...`; avoid Windows drive letters.
+- Ensure executable permissions: `chmod +x` for any helper shell scripts you add.
+- If you encounter architecture issues building native deps (e.g., `sql.js`), ensure Xcode Command Line Tools: `xcode-select --install`.
+- For Docker-based deployments on Apple Silicon (M-series), explicitly build multi-arch images:
+  ```bash
+  docker buildx build --platform linux/amd64,linux/arm64 -t <ACR_NAME>.azurecr.io/voice-ai-server:latest -f server/Dockerfile .
+  ```
 
 ### Runtime Configuration (API Base URL)
 
@@ -83,7 +191,7 @@ The server exposes `GET /runtime-config` returning JSON:
 ```json
 { "apiBaseUrl": "https://<server-app>.azurewebsites.net/api", "updatedAt": "<ISO timestamp>" }
 ```
-The client loads this before React mounts (see `client/src/utils/runtimeConfig.ts`). Changing the App Setting `API_BASE_URL` (or `VITE_API_URL` fallback) on the server updates the value for users on next page load—no client rebuild required.
+The client loads this before React mounts (see `client/src/utils/runtimeConfig.ts`). Changing the App Setting `API_BASE_URL` (or `VITE_API_URL` fallback) on the server updates the value for users without rebuilding client artifacts.
 
 ### SQLite Persistence (Native Path)
 
@@ -133,7 +241,6 @@ Stay with or use the container path if you require:
 - Key Vault + managed identity for secret retrieval.
 - GitHub Actions CI/CD pipeline referencing this script.
 
-
 ### Backend Setup
 
 1. Navigate to the server directory:
@@ -159,7 +266,7 @@ Stay with or use the container path if you require:
    AZURE_AI_PROJECT_CONNECTION_STRING=region.api.azureml.ms;subscription-id;resource-group;workspace-name
    ```
 
-   See the [Azure AI Agent Service Configuration](#azure-ai-agent-service-configuration) section below for detailed setup instructions.
+   See the Azure AI Agent Service Configuration section below for detailed setup instructions.
 
 4. Start the development server:
    ```powershell
@@ -216,7 +323,7 @@ voice-ai-chat/
 
 ## Personas & Prompts
 
-The app supports multiple personas and prompt templates, which can be easily extended by adding new files to the appropriate folders. See the `server/src/personas/` and `server/src/prompts/` directories for examples.
+The app supports multiple personas and prompt templates, which can be easily extended by adding new files to the appropriate folders. See the `server/src/personas/` and `server/src/prompts/` directories.
 
 ## Prompty Templates
 
@@ -232,7 +339,7 @@ For more details, see the [Prompts README](server/src/prompts/README.md).
 
 ## Azure AI Agent Service Configuration
 
-The application includes an AI conversation evaluation feature powered by Azure AI Agent Service. This feature analyzes your chat conversations and provides detailed feedback on conversation quality, effectiveness, and areas for improvement.
+The application includes an AI conversation evaluation feature powered by Azure AI Agent Service. This feature analyzes your chat conversations and provides detailed feedback on conversation quality.
 
 ### Prerequisites
 
@@ -255,7 +362,7 @@ This is the easiest method for local development:
    ```
 
 3. **Get your Project Connection String**:
-   - Go to [Azure AI Studio](https://ai.azure.com)
+   - Go to Azure AI Studio (https://ai.azure.com)
    - Navigate to your project
    - Go to **Settings** > **Connection details**
    - Copy the connection string (format: `region.api.azureml.ms;subscription-id;resource-group;workspace-name`)
@@ -299,7 +406,7 @@ For production deployments, you have two main options:
 
 #### Option 2: Managed Identity (Recommended for Azure deployments)
 
-If deploying to Azure App Service, Container Apps, Functions, etc.:
+If deploying to Azure App Service, Container Apps, Functions, etc.: 
 
 1. **Enable Managed Identity** on your Azure resource:
    - In Azure Portal, go to your App Service/Container App
@@ -360,7 +467,7 @@ The application uses `DefaultAzureCredential`, which attempts authentication in 
    ```powershell
    curl -X POST http://localhost:5000/api/evaluation/analyze-simple `
         -H "Content-Type: application/json" `
-        -d '{"messages":[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]}'
+        -d '{"messages":[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]}'}
    ```
 
 ### Troubleshooting
