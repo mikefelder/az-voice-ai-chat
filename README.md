@@ -48,7 +48,9 @@ Capabilities:
 - Dry run (`-WhatIf`) and selective build skip (`-NoBuild`).
 - Runtime-configurable API base URL without rebuilding client.
 
-Example (deploy both) - Windows PowerShell:
+#### Windows Deployment (PowerShell)
+
+Example (deploy both):
 ```powershell
 pwsh d:\code\voice-ai-chat\deploy-appservice.ps1 `
    -SubscriptionId <SUB_ID> `
@@ -77,12 +79,11 @@ Override API base URL explicitly:
 pwsh d:\code\voice-ai-chat\deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -ClientAppName voice-ai-client-native -ApiBaseUrl https://my-custom-server.azurewebsites.net/api
 ```
 
-### MacOS Local Deployment & Azure Publishing
+#### macOS Deployment (PowerShell or Bash)
 
-You can run the same PowerShell deployment script on macOS using the cross-platform PowerShell (`pwsh`) executable, or run equivalent Bash commands.
+You can run the same PowerShell deployment script on macOS using the cross-platform PowerShell (`pwsh`) executable, or execute equivalent Bash steps manually.
 
-#### 1. Install Required Tools
-
+1. Install Required Tools
 ```bash
 # Homebrew (if not installed)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -90,26 +91,26 @@ You can run the same PowerShell deployment script on macOS using the cross-platf
 # Azure CLI
 brew update && brew install azure-cli
 
-# (Optional) PowerShell for running the existing .ps1 scripts
+# (Optional) PowerShell for running .ps1 deployment script
 brew install --cask powershell
 
-# Node.js (if you need a specific version, consider using fnm or nvm)
+# Node.js (consider fnm or nvm for version management)
 brew install node
 ```
 
-#### 2. Clone and Navigate
+2. Clone and Navigate
 ```bash
 git clone https://github.com/mikefelder/az-voice-ai-chat.git
 cd az-voice-ai-chat
 ```
 
-#### 3. Login to Azure
+3. Login to Azure
 ```bash
 az login
 az account set --subscription <SUB_ID>
 ```
 
-#### 4. Run Deployment Script with PowerShell
+4. Run Deployment Script with PowerShell
 ```bash
 pwsh ./deploy-appservice.ps1 \
   -SubscriptionId <SUB_ID> \
@@ -118,7 +119,7 @@ pwsh ./deploy-appservice.ps1 \
   -ClientAppName voice-ai-client-native
 ```
 
-Examples (macOS):
+Examples:
 ```bash
 # Server only
 pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -SkipClient
@@ -133,22 +134,21 @@ pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAM
 pwsh ./deploy-appservice.ps1 -SubscriptionId <SUB_ID> -ResourceGroupName <RG_NAME> -ServerAppName voice-ai-server-native -ClientAppName voice-ai-client-native -ApiBaseUrl https://my-custom-server.azurewebsites.net/api
 ```
 
-#### 5. Bash-Only (If Avoiding PowerShell)
-If you prefer not to install PowerShell, you can manually reproduce the core steps performed by `deploy-appservice.ps1`:
-
+5. Bash-Only (If Avoiding PowerShell)
 ```bash
-# From repo root
 set -e
 SUB_ID="<SUB_ID>"
 RG="<RG_NAME>"
 SERVER="voice-ai-server-native"
 CLIENT="voice-ai-client-native"
+APP_PLAN="<APP_SERVICE_PLAN>"   # Existing App Service plan name
+
 az account set --subscription "$SUB_ID"
 
 # Build server
 pushd server
 npm ci
-npm run build  # Ensure build script produces dist or equivalent
+npm run build
 zip -r ../deploy_artifacts/server.zip . -x "node_modules/*" "*.log"
 popd
 
@@ -160,9 +160,9 @@ mkdir -p ../deploy_artifacts
 zip -r ../deploy_artifacts/client.zip dist
 popd
 
-# Create apps (first time only)
-az webapp create --resource-group "$RG" --name "$SERVER" --runtime "NODE:18-lts" --plan <APP_SERVICE_PLAN>
-az webapp create --resource-group "$RG" --name "$CLIENT" --runtime "NODE:18-lts" --plan <APP_SERVICE_PLAN>
+# (First-time) Create web apps
+az webapp create --resource-group "$RG" --name "$SERVER" --runtime "NODE:18-lts" --plan "$APP_PLAN"
+az webapp create --resource-group "$RG" --name "$CLIENT" --runtime "NODE:18-lts" --plan "$APP_PLAN"
 
 # Deploy zips
 az webapp deploy --resource-group "$RG" --name "$SERVER" --src-path deploy_artifacts/server.zip --type zip
@@ -176,14 +176,15 @@ az webapp config appsettings set --resource-group "$RG" --name "$CLIENT" --setti
   NODE_ENV=production VITE_API_URL="https://$SERVER.azurewebsites.net/api"
 ```
 
-#### 6. macOS Notes
-- Path style uses `/Users/<you>/code/...`; avoid Windows drive letters.
-- Ensure executable permissions: `chmod +x` for any helper shell scripts you add.
-- If you encounter architecture issues building native deps (e.g., `sql.js`), ensure Xcode Command Line Tools: `xcode-select --install`.
-- For Docker-based deployments on Apple Silicon (M-series), explicitly build multi-arch images:
-  ```bash
-  docker buildx build --platform linux/amd64,linux/arm64 -t <ACR_NAME>.azurecr.io/voice-ai-server:latest -f server/Dockerfile .
-  ```
+6. macOS Notes
+- Use macOS paths (`/Users/<you>/...`) instead of Windows drive letters.
+- Grant execute permission to any helper shell scripts: `chmod +x script.sh`.
+- If native builds fail (e.g. dependencies needing build tools), install Xcode Command Line Tools: `xcode-select --install`.
+- For Docker container path on Apple Silicon (multi-arch images):
+```bash
+docker buildx create --use || true
+docker buildx build --platform linux/amd64,linux/arm64 -t <ACR_NAME>.azurecr.io/voice-ai-server:latest -f server/Dockerfile .
+```
 
 ### Runtime Configuration (API Base URL)
 
@@ -194,18 +195,15 @@ The server exposes `GET /runtime-config` returning JSON:
 The client loads this before React mounts (see `client/src/utils/runtimeConfig.ts`). Changing the App Setting `API_BASE_URL` (or `VITE_API_URL` fallback) on the server updates the value for users without rebuilding client artifacts.
 
 ### SQLite Persistence (Native Path)
-
 - DB file path env precedence: `SQLITE_DB_PATH` > `DATABASE_PATH` > default.
 - Default Azure path: `/home/site/data/voice-ai-documents.db` (persistent between restarts & deployments; NOT in `wwwroot`).
 - Single-instance constraint: Do not scale out with raw SQLite on network storage (risk of locking). Keep instance count = 1 until migrating to a managed DB.
 
 ### SPA Deep Link Fallback
-
 - `client/public/404.html` injects a lightweight script that loads `index.html` and restores the original path, enabling deep links (`/chat`, etc.).
 - This file is copied into the deployment artifact automatically; App Service will serve it for unknown routes, allowing React Router to take over.
 
 ### Key App Settings Managed by Script
-
 Server:
 - `NODE_ENV=production`
 - `PORT=8080`
@@ -221,7 +219,6 @@ Client:
 Add your existing service keys (`AZURE_OPENAI_*`, `AZURE_SPEECH_*`, auth settings) manually or extend the script.
 
 ### Operational Notes & Limitations
-
 - Rolling back: Redeploy prior produced zip (`deploy_artifacts/server.zip` or `client.zip`) with the same script using `-NoBuild`.
 - Logs: Use `az webapp log tail` per app. Ensure App Service logging is enabled if deeper diagnostics needed.
 - Health: `/healthz` (lightweight) and `/api/health` (original) endpoints available.
@@ -229,7 +226,6 @@ Add your existing service keys (`AZURE_OPENAI_*`, `AZURE_SPEECH_*`, auth setting
 - Security: Secrets are stored as App Settings (not Key Vault) per current scope; rotate manually.
 
 ### When to Prefer Containers
-
 Stay with or use the container path if you require:
 - Custom OS-level packages / libs beyond Node runtime.
 - Consistent image immutability across multiple environments via ACR.
@@ -265,7 +261,6 @@ Stay with or use the container path if you require:
    # Azure AI Agent Service (for conversation evaluation)
    AZURE_AI_PROJECT_CONNECTION_STRING=region.api.azureml.ms;subscription-id;resource-group;workspace-name
    ```
-
    See the Azure AI Agent Service Configuration section below for detailed setup instructions.
 
 4. Start the development server:
@@ -330,11 +325,9 @@ The app supports multiple personas and prompt templates, which can be easily ext
 This application uses Microsoft's Prompty format for managing prompt templates. Prompty provides a standardized way to define, version, and manage LLM prompts with YAML frontmatter and template content.
 
 Templates are located in `server/src/prompts/` and can be configured via environment variables:
-
 ```env
 PROMPTY_TEMPLATE=your-template-name
 ```
-
 For more details, see the [Prompts README](server/src/prompts/README.md).
 
 ## Azure AI Agent Service Configuration
